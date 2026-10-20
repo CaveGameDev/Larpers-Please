@@ -38,11 +38,52 @@
   const COUNT  = 10;
   const STEP   = 100;           // wheel updates every 100 bytes
   const BANK   = 1000;          // every 1000 bytes -> banked into the fill, ticker cleared
+  const DESIGN_W = 1100;        // width the page is built for
 
   const disc  = document.getElementById("disc");
   const label = document.getElementById("label");
   const sub   = document.getElementById("sub");
   const list  = Array.from({ length: COUNT }, (_, i) => PREFIX + String(i + 1).padStart(2, "0"));
+
+  // Injected at the very top of the rebuilt page's <head> so it runs BEFORE the BoxedWine shell reads
+  // the screen size. No iframe, no scaling/transforms: the page is left exactly as built. On screens
+  // smaller than MIN_W x MIN_H, the page is simply told it is on a bigger screen (same aspect ratio),
+  // so it creates its full-size window and its own CSS can crop it down as it normally does.
+  const MIN_W = DESIGN_W;   // 1100
+  const MIN_H = 0;          // optional minimum height; 0 = keep the device's aspect ratio
+
+  const FIT_SCRIPT = [
+    '(function(){',
+    'var MIN_W=' + MIN_W + ',MIN_H=' + MIN_H + ';',
+    'function orig(o,p){var x=o,d;while(x&&!(d=Object.getOwnPropertyDescriptor(x,p)))x=Object.getPrototypeOf(x);',
+    ' if(!d)return function(){return 0;};',
+    ' return d.get?function(){return d.get.call(o);}:function(){return d.value;};}',
+    'function def(o,p,fn){try{Object.defineProperty(o,p,{configurable:true,get:fn});}catch(e){}}',
+    'var rw=orig(window,"innerWidth"),rh=orig(window,"innerHeight");',
+    'function f(){var w=rw()||1,h=rh()||1;return Math.max(1,MIN_W/w,MIN_H/h);}',
+    'function scaled(g){return function(){return Math.round(g()*f());};}',
+    'def(window,"innerWidth",scaled(rw));',
+    'def(window,"innerHeight",scaled(rh));',
+    'def(window,"outerWidth",scaled(orig(window,"outerWidth")));',
+    'def(window,"outerHeight",scaled(orig(window,"outerHeight")));',
+    'var S=window.screen;',
+    '["width","height","availWidth","availHeight"].forEach(function(k){def(S,k,scaled(orig(S,k)));});',
+    'var de=document.documentElement;',
+    'def(de,"clientWidth",scaled(orig(de,"clientWidth")));',
+    'def(de,"clientHeight",scaled(orig(de,"clientHeight")));',
+    'var vv=window.visualViewport;',
+    'if(vv){def(vv,"width",scaled(orig(vv,"width")));def(vv,"height",scaled(orig(vv,"height")));}',
+    '})();'
+  ].join("\n");
+
+  const INJECT = '<meta name="viewport" content="width=' + DESIGN_W + '">' +
+                 '<script>' + FIT_SCRIPT + '<\/script>';
+
+  function withFit(html) {
+    if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + INJECT);
+    if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, (m) => m + "<head>" + INJECT + "</head>");
+    return INJECT + html;
+  }
 
   function fail(msg) {
     label.className = "err";
@@ -66,9 +107,7 @@
     function addBytes(n) {
       ticker += n;
       while (ticker >= BANK) { banked += BANK; ticker -= BANK; }
-      // wheel shows progress in 100-byte steps only
-      const shown = banked + Math.floor(ticker / STEP) * STEP;
-      render(shown);
+      render(banked + Math.floor(ticker / STEP) * STEP);   // wheel moves in 100-byte steps
     }
 
     function render(bytes) {
@@ -102,12 +141,13 @@
     let off = 0; for (const p of parts) { all.set(p, off); off += p.length; }
     const html = new TextDecoder("utf-8").decode(all);
 
-    render(total || all.length);          // land on a full circle
+    render(total || all.length);
     if (!total) disc.style.setProperty("--p", 100);
     await new Promise((res) => setTimeout(res, 400));
 
+    // 5) Run it directly in this document (no iframe)
     document.open();
-    document.write(html);
+    document.write(withFit(html));
     document.close();
   } catch (err) {
     fail(err.message);
@@ -115,5 +155,4 @@
 })();
 </script>
 </body>
-</html>
 </html>
