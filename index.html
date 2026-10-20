@@ -15,66 +15,105 @@
     --p: 0;
     width: 140px; height: 140px; border-radius: 50%;
     background: conic-gradient(from 0deg, #e00 calc(var(--p) * 1%), #f2d6d6 0);
-    transition: --p .35s ease-out;
+    transition: --p .12s linear;
   }
   #label { font-size: 1.1rem; font-variant-numeric: tabular-nums; }
-  #label.err { color: #b00020; max-width: 80vw; text-align: center; }
+  #sub { font-size: .8rem; opacity: .6; font-variant-numeric: tabular-nums; }
+  .err { color: #b00020; max-width: 80vw; text-align: center; }
   @media (prefers-color-scheme: dark) {
     body { background: #111; color: #eee; }
     #disc { background: conic-gradient(from 0deg, #e00 calc(var(--p) * 1%), #3a2222 0); }
-    #label.err { color: #ff6b6b; }
+    .err { color: #ff6b6b; }
   }
 </style>
 </head>
 <body>
 <div id="disc" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
 <div id="label">0%</div>
+<div id="sub">0 bytes</div>
 
 <script>
 (async function () {
   const PREFIX = "Main.part";   // Main.part01 ... Main.part10
   const COUNT  = 10;
-  const disc = document.getElementById("disc");
+  const STEP   = 100;           // wheel updates every 100 bytes
+  const BANK   = 1000;          // every 1000 bytes -> banked into the fill, ticker cleared
+
+  const disc  = document.getElementById("disc");
   const label = document.getElementById("label");
+  const sub   = document.getElementById("sub");
+  const list  = Array.from({ length: COUNT }, (_, i) => PREFIX + String(i + 1).padStart(2, "0"));
 
-  const list = Array.from({ length: COUNT }, (_, i) => PREFIX + String(i + 1).padStart(2, "0"));
-  let done = 0;
-
-  function progress() {
-    done++;
-    const pct = Math.round((done / COUNT) * 100);
-    disc.style.setProperty("--p", pct);
-    disc.setAttribute("aria-valuenow", pct);
-    label.textContent = pct + "%";
+  function fail(msg) {
+    label.className = "err";
+    label.textContent = msg + " — serve this folder over http (not file://).";
+    sub.textContent = "";
   }
 
   try {
-    // Fetch all parts at once; each success bumps the loader 10%
-    const buffers = await Promise.all(list.map(async (name) => {
-      const r = await fetch(name, { cache: "no-store" });
-      if (!r.ok) throw new Error(name + " failed (HTTP " + r.status + ")");
-      const buf = await r.arrayBuffer();
-      progress();
-      return buf;
+    // 1) Learn total size so the wheel can reach exactly 100%
+    const sizes = await Promise.all(list.map(async (n) => {
+      const r = await fetch(n, { method: "HEAD", cache: "no-store" });
+      if (!r.ok) throw new Error(n + " failed (HTTP " + r.status + ")");
+      return parseInt(r.headers.get("Content-Length"), 10) || 0;
+    }));
+    const total = sizes.reduce((a, b) => a + b, 0);
+
+    // 2) Byte ticker: never grows past BANK. Each full BANK moves into `banked`, ticker resets.
+    let ticker = 0;   // bytes since last bank (0..999)
+    let banked = 0;   // bytes already folded into the fill (multiples of BANK)
+
+    function addBytes(n) {
+      ticker += n;
+      while (ticker >= BANK) { banked += BANK; ticker -= BANK; }
+      // wheel shows progress in 100-byte steps only
+      const shown = banked + Math.floor(ticker / STEP) * STEP;
+      render(shown);
+    }
+
+    function render(bytes) {
+      const pct = total ? Math.min(100, (bytes / total) * 100) : 0;
+      disc.style.setProperty("--p", pct.toFixed(2));
+      disc.setAttribute("aria-valuenow", Math.round(pct));
+      label.textContent = Math.round(pct) + "%";
+      sub.textContent = bytes.toLocaleString() + (total ? " / " + total.toLocaleString() : "") + " bytes";
+    }
+
+    // 3) Stream every part, feeding the ticker as chunks arrive
+    const parts = await Promise.all(list.map(async (n) => {
+      const r = await fetch(n, { cache: "no-store" });
+      if (!r.ok) throw new Error(n + " failed (HTTP " + r.status + ")");
+      const reader = r.body.getReader();
+      const chunks = [];
+      let len = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value); len += value.length;
+        addBytes(value.length);
+      }
+      const out = new Uint8Array(len);
+      let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; }
+      return out;
     }));
 
-    // Join bytes in order, decode once (safe for splits mid UTF-8 character)
-    const total = buffers.reduce((n, b) => n + b.byteLength, 0);
-    const all = new Uint8Array(total);
-    let off = 0;
-    for (const b of buffers) { all.set(new Uint8Array(b), off); off += b.byteLength; }
+    // 4) Join bytes in order, decode once (safe for splits mid UTF-8 character)
+    const all = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let off = 0; for (const p of parts) { all.set(p, off); off += p.length; }
     const html = new TextDecoder("utf-8").decode(all);
 
-    // Let the full red circle show briefly, then run the rebuilt page
-    await new Promise((res) => setTimeout(res, 450));
+    render(total || all.length);          // land on a full circle
+    if (!total) disc.style.setProperty("--p", 100);
+    await new Promise((res) => setTimeout(res, 400));
+
     document.open();
     document.write(html);
     document.close();
   } catch (err) {
-    label.classList.add("err");
-    label.textContent = err.message + " — serve this folder over http (not file://).";
+    fail(err.message);
   }
 })();
 </script>
 </body>
+</html>
 </html>
