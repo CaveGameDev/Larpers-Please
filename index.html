@@ -80,6 +80,10 @@
                  '<script>' + FIT_SCRIPT + '<\/script>';
 
   function withFit(html) {
+    // The page ships its own viewport meta (width=device-width); a second one would override ours,
+    // so drop the original (it lives near the top, so only look there).
+    const HEAD = 20000;
+    html = html.slice(0, HEAD).replace(/<meta[^>]*name=["']viewport["'][^>]*>/i, "") + html.slice(HEAD);
     if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + INJECT);
     if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, (m) => m + "<head>" + INJECT + "</head>");
     return INJECT + html;
