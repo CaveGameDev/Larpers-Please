@@ -79,7 +79,11 @@
   const INJECT = '<meta name="viewport" content="width=' + DESIGN_W + '">' +
                  '<script>' + FIT_SCRIPT + '<\/script>';
 
+  // The size-faking is now OFF by default (the page is run untouched). Add ?spoof=1 to the loader's URL to turn it on.
+  const SPOOF = /[?&]spoof=1(?:&|$)/.test(location.search);
+
   function withFit(html) {
+    if (!SPOOF) return html;
     // The page ships its own viewport meta (width=device-width); a second one would override ours,
     // so drop the original (it lives near the top, so only look there).
     const HEAD = 20000;
